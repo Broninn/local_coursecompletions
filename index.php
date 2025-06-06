@@ -104,8 +104,8 @@ echo $OUTPUT->heading('Relatório de Conclusão de Curso');
 echo html_writer::start_tag('form', ['method' => 'get']);
 echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'id', 'value' => $courseid]);
 echo html_writer::label('Grupo: ', 'groupid');
-echo html_writer::select($groupoptions, 'groupid', $groupid, false);
-echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => 'Filtrar']);
+echo html_writer::select($groupoptions, 'groupid', $groupid, false, ['style' => 'margin-left: 0.75rem;']);
+echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => 'Filtrar', 'class' => 'btn btn-primary', 'style' => 'margin-left: 0.75rem;']);
 echo html_writer::end_tag('form');
 
 // Botão para exportar XLS -- Falta complementar
