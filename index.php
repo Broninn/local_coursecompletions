@@ -23,8 +23,17 @@ $groupoptions = [0 => 'Todos os participantes'] + array_column($groupmenu, 'name
 
 // SQL dinâmico com contagem para paginação
 $groupfilter = '';
-$params = ['courseid' => $courseid];
-$params['groupidcourse'] = $courseid;
+$params = [
+    'courseid' => $courseid,
+    'groupidcourse' => $courseid,
+    'groupid' => $groupid,
+    'dedicationcourseid' => $courseid, // novo alias
+];
+
+// Mesmo que $groupid seja 0, ainda devemos preencher para evitar erro.
+$params['groupid'] = $groupid;
+
+
 
 
 if ($groupid > 0) {
@@ -58,17 +67,41 @@ $datasql = "
         CASE 
             WHEN cc.timecompleted IS NOT NULL THEN 'Concluído'
             ELSE 'Possível evasão'
-        END AS status
+        END AS status,
+        
+        CASE 
+            WHEN bd.total IS NULL OR bd.total = 0 THEN 'Nunca acessou'
+            ELSE
+            TRIM(BOTH FROM
+            CONCAT(
+                CASE 
+                    WHEN EXTRACT(hour FROM make_interval(secs => bd.total)) > 0 
+                        THEN EXTRACT(hour FROM make_interval(secs => bd.total)) || 'h '
+                    ELSE ''
+                END,
+                EXTRACT(minute FROM make_interval(secs => bd.total)) || 'min'
+            )
+        )
+END AS tempo_formatado
+
+
     FROM {user} u
     INNER JOIN {user_enrolments} ue ON ue.userid = u.id
     INNER JOIN {enrol} e ON e.id = ue.enrolid AND e.courseid = :courseid
     INNER JOIN {role_assignments} ra ON ra.userid = u.id AND ra.roleid = 5
     INNER JOIN {context} ct ON ct.contextlevel = 50 AND ct.instanceid = e.courseid AND ct.id = ra.contextid
     LEFT JOIN {course_completions} cc ON cc.course = e.courseid AND cc.userid = u.id
+    LEFT JOIN (
+        SELECT userid, courseid, SUM(timespent) AS total
+        FROM {block_dedication}
+        WHERE courseid = :dedicationcourseid
+        GROUP BY userid, courseid
+    ) bd ON bd.userid = u.id AND bd.courseid = e.courseid
     $groupfilter
-    GROUP BY u.id, u.firstname, u.lastname, cc.timecompleted
+    GROUP BY u.id, u.firstname, u.lastname, cc.timecompleted, bd.total
     ORDER BY fullname
 ";
+
 
 if (!$download) {
     $datasql .= " LIMIT :limit OFFSET :offset";
@@ -83,18 +116,20 @@ if ($download) {
     require_once($CFG->libdir . '/dataformatlib.php');
     $filename = 'relatorio_conclusao_' . $courseid;
 
-    $exportdata = [];
+    $exportdata = []; // Inicializar corretamente
     foreach ($data as $row) {
         $exportdata[] = [
             'Nome Completo' => $row->fullname,
             'Grupo(s)' => $row->groupname,
             'Status' => $row->status,
+            'Tempo de Acesso' => $row->tempo_formatado,
         ];
     }
 
-    download_as_dataformat($filename, 'xls', ['Nome Completo', 'Grupo(s)', 'Status'], $exportdata);
+    download_as_dataformat($filename, 'xls', ['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'], $exportdata);
     exit;
 }
+
 
 // Renderização HTML
 echo $OUTPUT->header();
@@ -109,14 +144,19 @@ echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => 'Filtrar', 
 echo html_writer::end_tag('form');
 
 // Botão para exportar XLS -- Falta complementar
-// $downloadurl = new moodle_url('/local/coursecompletions/index.php', ['id' => $courseid, 'groupid' => $groupid, 'download' => 1]);
-// echo html_writer::link($downloadurl, 'Exportar para Excel', ['class' => 'btn btn-primary', 'style' => 'margin-top: 10px; display: inline-block;']);
+$downloadurl = new moodle_url('/local/coursecompletions/index.php', [
+    'id' => $courseid,
+    'groupid' => $groupid,
+    'download' => 1
+]);
+
+echo html_writer::link($downloadurl, 'Exportar para Excel', ['class' => 'btn btn-primary', 'style' => 'margin-top: 10px; display: inline-block;']);
 
 // Tabela
 $table = new html_table();
-$table->head = ['Nome Completo', 'Grupo(s)', 'Status'];
+$table->head = ['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'];
 foreach ($data as $row) {
-    $table->data[] = [$row->fullname, $row->groupname, $row->status];
+    $table->data[] = [$row->fullname, $row->groupname, $row->status, $row->tempo_formatado];
 }
 echo html_writer::table($table);
 
