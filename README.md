@@ -43,11 +43,11 @@ local/coursecompletions/
 
 ## 📌 Obrigações
 
-# Certifique-se que seu curso tenha as conclusões ativadas e tenha as regras definidas.
+Certifique-se que seu curso tenha as conclusões ativadas e tenha as regras definidas.
 
 Você pode acessar em: > Curso -> Conclusões do Curso
 
-# Verifique se o seu Moodle contém o plugin Dedication instalado
+Verifique se o seu Moodle contém o plugin Dedication instalado
 
 https://moodle.org/plugins/block_dedication
 
