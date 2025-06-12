@@ -2,6 +2,10 @@
 require_once(__DIR__ . '/../../config.php');
 require_once($CFG->libdir . '/tablelib.php');
 require_once($CFG->libdir . '/csvlib.class.php');
+require_once($CFG->libdir . '/phpspreadsheet/vendor/autoload.php');
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 $courseid = required_param('id', PARAM_INT);
 $groupid = optional_param('groupid', 0, PARAM_INT);
@@ -128,6 +132,37 @@ if ($download === 'csv') {
     exit;
 }
 
+if ($download === 'xlsx') {
+
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
+
+    // Cabeçalhos
+    $sheet->fromArray(['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'], NULL, 'A1');
+
+    // Dados
+    $rownum = 2;
+    foreach ($data as $row) {
+        $sheet->fromArray([
+            $row->fullname,
+            $row->groupname,
+            $row->status,
+            $row->tempo_formatado
+        ], NULL, "A$rownum");
+        $rownum++;
+    }
+
+    // Cabeçalhos HTTP
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment;filename="relatorio_conclusao_sala_' . $courseid . '.xlsx"');
+    header('Cache-Control: max-age=0');
+
+    $writer = new Xlsx($spreadsheet);
+    $writer->save('php://output');
+    exit;
+}
+
+
 // Renderização HTML
 echo $OUTPUT->header();
 echo $OUTPUT->heading('Relatório de Conclusão de Curso');
@@ -140,13 +175,6 @@ echo html_writer::select($groupoptions, 'groupid', $groupid, false, ['style' => 
 echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => 'Filtrar', 'class' => 'btn btn-primary', 'style' => 'margin-left: 0.75rem;', 'margin-bottom: 0.75rem;']);
 echo html_writer::end_tag('form');
 
-// Botão CSV
-$csvurl = new moodle_url('/local/coursecompletions/index.php', [
-    'id' => $courseid,
-    'groupid' => $groupid,
-    'download' => 'csv'
-]);
-
 // Tabela
 $table = new html_table();
 $table->head = ['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'];
@@ -155,12 +183,34 @@ foreach ($data as $row) {
 }
 echo html_writer::table($table);
 
+// Botão CSV
+// $csvurl = new moodle_url('/local/coursecompletions/index.php', [
+//     'id' => $courseid,
+//     'groupid' => $groupid,
+//     'download' => 'csv'
+// ]);
+// echo html_writer::link(
+//     $csvurl,
+//     'Exportar CSV',
+//     [
+//         'class' => 'btn btn-primary',  // btn-primary, btn-secondary, btn-success etc.
+//         'style' => 'margin-top:0.75rem; margin-bottom: 0.75rem'
+//     ]
+// );
+
+// Botão XLSX
+$xlsxurl = new moodle_url('/local/coursecompletions/index.php', [
+    'id' => $courseid,
+    'groupid' => $groupid,
+    'download' => 'xlsx'
+]);
 echo html_writer::link(
-    $csvurl,
-    'Exportar CSV',
+    $xlsxurl,
+    'Exportar XLSX',
     [
-        'class' => 'btn btn-primary',  // btn-primary, btn-secondary, btn-success etc.
+        'class' => 'btn btn-primary',
         'style' => 'margin-top:0.75rem; margin-bottom: 0.75rem'
+
     ]
 );
 
