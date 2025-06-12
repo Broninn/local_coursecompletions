@@ -107,7 +107,7 @@ $data = $DB->get_records_sql($datasql, $params);
 
 if ($download === 'csv') {
     header('Content-Type: text/csv; charset=UTF-8');
-    header('Content-Disposition: attachment; filename="relatorio_conclusao_' . $courseid . '.csv"');
+    header('Content-Disposition: attachment; filename="relatorio_conclusao_sala_' . $courseid . '.csv"');
 
     $out = fopen('php://output', 'w');
 
