@@ -7,7 +7,7 @@ $courseid = required_param('id', PARAM_INT);
 $groupid = optional_param('groupid', 0, PARAM_INT);
 $page = optional_param('page', 0, PARAM_INT);
 $perpage = get_config('moodle', 'userlistperpage') ?: 20;
-$download = optional_param('download', 0, PARAM_BOOL);
+$download = optional_param('download', '', PARAM_ALPHA); // '' ou 'csv'
 
 require_login($courseid);
 $context = context_course::instance($courseid);
@@ -32,9 +32,6 @@ $params = [
 
 // Mesmo que $groupid seja 0, ainda devemos preencher para evitar erro.
 $params['groupid'] = $groupid;
-
-
-
 
 if ($groupid > 0) {
     $groupfilter = "INNER JOIN {groups_members} gm ON gm.userid = u.id AND gm.groupid = :groupid";
@@ -82,9 +79,7 @@ $datasql = "
                 EXTRACT(minute FROM make_interval(secs => bd.total)) || 'min'
             )
         )
-END AS tempo_formatado
-
-
+        END AS tempo_formatado
     FROM {user} u
     INNER JOIN {user_enrolments} ue ON ue.userid = u.id
     INNER JOIN {enrol} e ON e.id = ue.enrolid AND e.courseid = :courseid
@@ -102,7 +97,6 @@ END AS tempo_formatado
     ORDER BY fullname
 ";
 
-
 if (!$download) {
     $datasql .= " LIMIT :limit OFFSET :offset";
     $params['limit'] = $perpage;
@@ -111,25 +105,28 @@ if (!$download) {
 
 $data = $DB->get_records_sql($datasql, $params);
 
-// Exportar XLS -- Falta complementar
-if ($download) {
-    require_once($CFG->libdir . '/dataformatlib.php');
-    $filename = 'relatorio_conclusao_' . $courseid;
+if ($download === 'csv') {
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="relatorio_conclusao_' . $courseid . '.csv"');
 
-    $exportdata = []; // Inicializar corretamente
+    $out = fopen('php://output', 'w');
+
+    fputcsv($out, ['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'], ';');
+
+    // Dados
     foreach ($data as $row) {
-        $exportdata[] = [
-            'Nome Completo' => $row->fullname,
-            'Grupo(s)' => $row->groupname,
-            'Status' => $row->status,
-            'Tempo de Acesso' => $row->tempo_formatado,
-        ];
+        fputcsv($out, [
+            $row->fullname,
+            $row->groupname,
+            $row->status,
+            $row->tempo_formatado
+        ], ';');
     }
 
-    download_as_dataformat($filename, 'xls', ['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'], $exportdata);
+
+    fclose($out);
     exit;
 }
-
 
 // Renderização HTML
 echo $OUTPUT->header();
@@ -138,19 +135,17 @@ echo $OUTPUT->heading('Relatório de Conclusão de Curso');
 // Filtro de Grupo
 echo html_writer::start_tag('form', ['method' => 'get']);
 echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'id', 'value' => $courseid]);
-echo html_writer::label('Grupo: ', 'groupid');
-echo html_writer::select($groupoptions, 'groupid', $groupid, false, ['style' => 'margin-left: 0.75rem;']);
-echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => 'Filtrar', 'class' => 'btn btn-primary', 'style' => 'margin-left: 0.75rem;']);
+echo html_writer::label('Grupo: ', 'groupid', ['style' => 'margin-bottom: 0.75rem;']);
+echo html_writer::select($groupoptions, 'groupid', $groupid, false, ['style' => 'margin-left: 0.75rem;', 'margin-bottom: 0.75rem;']);
+echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => 'Filtrar', 'class' => 'btn btn-primary', 'style' => 'margin-left: 0.75rem;', 'margin-bottom: 0.75rem;']);
 echo html_writer::end_tag('form');
 
-// Botão para exportar XLS -- Falta complementar
-$downloadurl = new moodle_url('/local/coursecompletions/index.php', [
+// Botão CSV
+$csvurl = new moodle_url('/local/coursecompletions/index.php', [
     'id' => $courseid,
     'groupid' => $groupid,
-    'download' => 1
+    'download' => 'csv'
 ]);
-
-echo html_writer::link($downloadurl, 'Exportar para Excel', ['class' => 'btn btn-primary', 'style' => 'margin-top: 10px; display: inline-block;']);
 
 // Tabela
 $table = new html_table();
@@ -159,6 +154,15 @@ foreach ($data as $row) {
     $table->data[] = [$row->fullname, $row->groupname, $row->status, $row->tempo_formatado];
 }
 echo html_writer::table($table);
+
+echo html_writer::link(
+    $csvurl,
+    'Exportar CSV',
+    [
+        'class' => 'btn btn-primary',  // btn-primary, btn-secondary, btn-success etc.
+        'style' => 'margin-top:0.75rem; margin-bottom: 0.75rem'
+    ]
+);
 
 // Paginação
 $baseurl = new moodle_url('/local/coursecompletions/index.php', ['id' => $courseid, 'groupid' => $groupid]);
