@@ -27,12 +27,16 @@ $groupoptions = [0 => 'Todos os participantes'] + array_column($groupmenu, 'name
 
 // SQL dinâmico com contagem para paginação
 $groupfilter = '';
+// Pega total de critérios de conclusão desse curso
+$totalcriteria = $DB->count_records('course_completion_criteria', ['course' => $courseid]);
 $params = [
     'courseid' => $courseid,
     'groupidcourse' => $courseid,
     'groupid' => $groupid,
     'dedicationcourseid' => $courseid, // novo alias
 ];
+
+$params['totalcriteria'] = $totalcriteria;
 
 // Mesmo que $groupid seja 0, ainda devemos preencher para evitar erro.
 $params['groupid'] = $groupid;
@@ -53,7 +57,8 @@ $countsql = "
 ";
 $totalusers = $DB->count_records_sql($countsql, $params);
 
-// SQL principal
+
+
 $datasql = "
     SELECT 
         u.id,
@@ -64,32 +69,46 @@ $datasql = "
             JOIN {groups_members} gm ON gm.groupid = g.id
             WHERE gm.userid = u.id AND g.courseid = :groupidcourse
         ), 'Sem grupo') AS groupname,
+        CASE
+        WHEN ue.timestart = 0 THEN 'Aluno egresso'
+        ELSE TO_CHAR (
+            TO_TIMESTAMP (ue.timestart) AT TIME ZONE 'UTC' AT TIME ZONE INTERVAL '+03:00',
+            'DD/MM/YYYY HH24:MI:SS'
+        )
+    END AS data_inicio_turma_disciplina,
+    CASE
+        WHEN ue.timeend = 0 THEN 'Aluno egresso'
+        ELSE TO_CHAR (
+            TO_TIMESTAMP (ue.timeend) AT TIME ZONE 'UTC' AT TIME ZONE INTERVAL '+03:00',
+            'DD/MM/YYYY HH24:MI:SS'
+        )
+    END AS data_fim_turma_disciplina,
 
         CASE 
-            WHEN cc.timecompleted IS NOT NULL THEN 'Concluído'
+            WHEN COUNT(DISTINCT ccc.criteriaid) = :totalcriteria THEN 'Concluído'
             ELSE 'Possível evasão'
         END AS status,
-        
+
         CASE 
             WHEN bd.total IS NULL OR bd.total = 0 THEN 'Nunca acessou'
-            ELSE
-            TRIM(BOTH FROM
-            CONCAT(
-                CASE 
-                    WHEN EXTRACT(hour FROM make_interval(secs => bd.total)) > 0 
-                        THEN EXTRACT(hour FROM make_interval(secs => bd.total)) || 'h '
-                    ELSE ''
-                END,
-                EXTRACT(minute FROM make_interval(secs => bd.total)) || 'min'
+            ELSE TRIM(BOTH FROM
+                CONCAT(
+                    CASE 
+                        WHEN EXTRACT(hour FROM make_interval(secs => bd.total)) > 0 
+                            THEN EXTRACT(hour FROM make_interval(secs => bd.total)) || 'h '
+                        ELSE ''
+                    END,
+                    EXTRACT(minute FROM make_interval(secs => bd.total)) || 'min'
+                )
             )
-        )
         END AS tempo_formatado
+
     FROM {user} u
     INNER JOIN {user_enrolments} ue ON ue.userid = u.id
     INNER JOIN {enrol} e ON e.id = ue.enrolid AND e.courseid = :courseid
     INNER JOIN {role_assignments} ra ON ra.userid = u.id AND ra.roleid = 5
     INNER JOIN {context} ct ON ct.contextlevel = 50 AND ct.instanceid = e.courseid AND ct.id = ra.contextid
-    LEFT JOIN {course_completions} cc ON cc.course = e.courseid AND cc.userid = u.id
+    LEFT JOIN {course_completion_crit_compl} ccc ON ccc.userid = u.id AND ccc.course = e.courseid
     LEFT JOIN (
         SELECT userid, courseid, SUM(timespent) AS total
         FROM {block_dedication}
@@ -97,9 +116,10 @@ $datasql = "
         GROUP BY userid, courseid
     ) bd ON bd.userid = u.id AND bd.courseid = e.courseid
     $groupfilter
-    GROUP BY u.id, u.firstname, u.lastname, cc.timecompleted, bd.total
+    GROUP BY u.id, u.firstname, u.lastname, bd.total, ue.timestart, ue.timeend
     ORDER BY fullname
 ";
+
 
 if (!$download) {
     $datasql .= " LIMIT :limit OFFSET :offset";
@@ -115,15 +135,18 @@ if ($download === 'csv') {
 
     $out = fopen('php://output', 'w');
 
-    fputcsv($out, ['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'], ';');
+    fputcsv($out, ['Nome Completo', 'Grupo(s)', 'Data inicio', 'Data fim', 'Status', 'Tempo de Acesso'], ';');
 
     // Dados
     foreach ($data as $row) {
         fputcsv($out, [
             $row->fullname,
             $row->groupname,
+            $row->data_inicio_turma_disciplina,
+            $row->data_fim_turma_disciplina,
             $row->status,
             $row->tempo_formatado
+
         ], ';');
     }
 
@@ -138,7 +161,7 @@ if ($download === 'xlsx') {
     $sheet = $spreadsheet->getActiveSheet();
 
     // Cabeçalhos
-    $sheet->fromArray(['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'], NULL, 'A1');
+    $sheet->fromArray(['Nome Completo', 'Grupo(s)', 'Data inicio', 'Data fim', 'Status', 'Tempo de Acesso'], NULL, 'A1');
 
     // Dados
     $rownum = 2;
@@ -146,6 +169,8 @@ if ($download === 'xlsx') {
         $sheet->fromArray([
             $row->fullname,
             $row->groupname,
+            $row->data_inicio_turma_disciplina,
+            $row->data_fim_turma_disciplina,
             $row->status,
             $row->tempo_formatado
         ], NULL, "A$rownum");
@@ -177,9 +202,16 @@ echo html_writer::end_tag('form');
 
 // Tabela
 $table = new html_table();
-$table->head = ['Nome Completo', 'Grupo(s)', 'Status', 'Tempo de Acesso'];
+$table->head = ['Nome Completo', 'Grupo(s)', 'Data inicio', 'Data fim', 'Status', 'Tempo de Acesso'];
 foreach ($data as $row) {
-    $table->data[] = [$row->fullname, $row->groupname, $row->status, $row->tempo_formatado];
+    $table->data[] = [
+        $row->fullname,
+        $row->groupname,
+        $row->data_inicio_turma_disciplina,
+        $row->data_fim_turma_disciplina,
+        $row->status,
+        $row->tempo_formatado
+    ];
 }
 echo html_writer::table($table);
 
