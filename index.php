@@ -12,6 +12,7 @@ $groupid = optional_param('groupid', 0, PARAM_INT);
 $page = optional_param('page', 0, PARAM_INT);
 $perpage = get_config('moodle', 'userlistperpage') ?: 20;
 $download = optional_param('download', '', PARAM_ALPHA); // '' ou 'csv'
+$statusfilter = optional_param('status', '', PARAM_TEXT);
 
 require_login($courseid);
 $context = context_course::instance($courseid);
@@ -27,15 +28,17 @@ $groupoptions = [0 => 'Todos os participantes'] + array_column($groupmenu, 'name
 
 // SQL dinâmico com contagem para paginação
 $groupfilter = '';
+
 // Pega total de critérios de conclusão desse curso
 $totalcriteria = $DB->count_records('course_completion_criteria', ['course' => $courseid]);
 $params = [
     'courseid' => $courseid,
-    // 'courseid2' => $courseid,
+    'courseid2' => $courseid,
     'courseid3' => $courseid,
     'courseid4' => $courseid,
     'courseid5' => $courseid,
     'courseid6' => $courseid,
+    'courseid7' => $courseid,
     'groupidcourse' => $courseid,
     'groupid' => $groupid,
     'dedicationcourseid' => $courseid, // novo alias
@@ -43,8 +46,11 @@ $params = [
 
 $params['totalcriteria'] = $totalcriteria;
 
-// Mesmo que $groupid seja 0, ainda devemos preencher para evitar erro.
+// Mesmo que $groupid seja 0, ainda deve ser preenchido para evitar erro.
 $params['groupid'] = $groupid;
+if (!empty($statusfilter)) {
+    $params['statusfilter'] = $statusfilter;
+}
 
 if ($groupid > 0) {
     $groupfilter = "INNER JOIN {groups_members} gm ON gm.userid = u.id AND gm.groupid = :groupid";
@@ -86,17 +92,15 @@ $datasql = "
             'DD/MM/YYYY HH24:MI:SS'
         )
     END AS data_fim_turma_disciplina,
-
         CASE 
             WHEN COUNT(DISTINCT ccc.criteriaid) = :totalcriteria THEN 'Concluído'
             ELSE 'Possível evasão'
         END AS status,
-
         CASE
-        WHEN SUM(bd.total) IS NULL THEN 'Nunca acessou'
-        ELSE TRIM(
-            BOTH
-            FROM
+            WHEN SUM(bd.total) IS NULL THEN 'Nunca acessou'
+            ELSE TRIM(
+                BOTH
+                FROM
                 CONCAT (
                     CASE
                         WHEN EXTRACT(
@@ -116,55 +120,46 @@ $datasql = "
                             make_interval (secs => SUM(bd.total))
                     ) || 'min'
                 )
-        )
-    END AS tempo_formatado,
-    
+            )
+        END AS tempo_formatado,
     ROUND(
         100.0 * (
-            (
-                SELECT
-                    COUNT(*)
-                FROM
-                    mdl_course_completion_criteria
-                WHERE
-                    course = :courseid3
-            ) - COUNT(DISTINCT ccc.criteriaid)
-        ) / NULLIF(
-            (
-                SELECT
-                    COUNT(*)
-                FROM
-                    mdl_course_completion_criteria
-                WHERE
-                    course = :courseid4
-            ),
+                    (
+                        SELECT
+                            COUNT(*)
+                        FROM
+                            mdl_course_completion_criteria
+                        WHERE
+                            course = :courseid3
+                    ) - COUNT(DISTINCT ccc.criteriaid)
+                ) / NULLIF(
+                (
+                    SELECT
+                        COUNT(*)
+                    FROM
+                        mdl_course_completion_criteria
+                    WHERE
+                        course = :courseid4
+                ),
             0
         )
     ,1) || '%' AS porcentagem_pendente,
     CASE
         WHEN TO_TIMESTAMP (ue.timestart) > NOW () THEN 'A iniciar'
-        --WHEN COUNT(DISTINCT ccc.criteriaid) = 0 THEN 'Possível evasão'
         WHEN COUNT(DISTINCT ccc.criteriaid) < (
-            SELECT
-                COUNT(*)
-            FROM
-                mdl_course_completion_criteria
-            WHERE
-                course = :courseid5
+            SELECT COUNT(*)
+            FROM mdl_course_completion_criteria
+            WHERE course = :courseid5
         )
         AND ue.timeend > 0
         AND TO_TIMESTAMP (ue.timeend) > NOW () THEN 'Em andamento'
         WHEN COUNT(DISTINCT ccc.criteriaid) < (
-            SELECT
-                COUNT(*)
-            FROM
-                mdl_course_completion_criteria
-            WHERE
-                course = :courseid6
-        ) THEN 'Possível evasão' -- aluno com critérios incompletos, mas data final já passou
+            SELECT COUNT(*)
+            FROM mdl_course_completion_criteria
+            WHERE course = :courseid6
+        ) THEN 'Possível evasão'
         ELSE 'Concluído'
-    END AS status
-
+    END AS status_final
     FROM {user} u
     INNER JOIN {user_enrolments} ue ON ue.userid = u.id
     INNER JOIN {enrol} e ON e.id = ue.enrolid AND e.courseid = :courseid
@@ -179,9 +174,20 @@ $datasql = "
     ) bd ON bd.userid = u.id AND bd.courseid = e.courseid
     $groupfilter
     GROUP BY u.id, u.firstname, u.lastname, bd.total, ue.timestart, ue.timeend
+    HAVING 1=1" . (!empty($statusfilter) ? " AND (
+    CASE
+        WHEN TO_TIMESTAMP (ue.timestart) > NOW () THEN 'A iniciar'
+        WHEN COUNT(DISTINCT ccc.criteriaid) < (
+            SELECT COUNT(*) FROM mdl_course_completion_criteria WHERE course = :courseid2
+        ) AND ue.timeend > 0 AND TO_TIMESTAMP (ue.timeend) > NOW () THEN 'Em andamento'
+        WHEN COUNT(DISTINCT ccc.criteriaid) < (
+            SELECT COUNT(*) FROM mdl_course_completion_criteria WHERE course = :courseid7
+        ) THEN 'Possível evasão'
+        ELSE 'Concluído'
+        END
+    ) = :statusfilter" : "") . "
     ORDER BY fullname
 ";
-
 
 if (!$download) {
     $datasql .= " LIMIT :limit OFFSET :offset";
@@ -208,12 +214,10 @@ if ($download === 'csv') {
             $row->data_fim_turma_disciplina,
             $row->tempo_formatado,
             $row->porcentagem_pendente,
-            $row->status
+            $row->status_final
 
         ], ';');
     }
-
-
     fclose($out);
     exit;
 }
@@ -236,7 +240,7 @@ if ($download === 'xlsx') {
             $row->data_fim_turma_disciplina,
             $row->tempo_formatado,
             $row->porcentagem_pendente,
-            $row->status
+            $row->status_final
 
         ], NULL, "A$rownum");
         $rownum++;
@@ -262,6 +266,20 @@ echo html_writer::start_tag('form', ['method' => 'get']);
 echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'id', 'value' => $courseid]);
 echo html_writer::label('Grupo: ', 'groupid', ['style' => 'margin-bottom: 0.75rem;']);
 echo html_writer::select($groupoptions, 'groupid', $groupid, false, ['style' => 'margin-left: 0.75rem;', 'margin-bottom: 0.75rem;']);
+echo html_writer::label('Status: ', 'status', ['style' => 'margin-left: 1rem; margin-bottom: 0.75rem;']);
+echo html_writer::select(
+    [
+        '' => 'Todos',
+        'Concluído' => 'Concluído',
+        'Em andamento' => 'Em andamento',
+        'Possível evasão' => 'Possível evasão',
+        'A iniciar' => 'A iniciar'
+    ],
+    'status',
+    $statusfilter,
+    false,
+    ['style' => 'margin-left: 0.5rem;']
+);
 echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => 'Filtrar', 'class' => 'btn btn-primary', 'style' => 'margin-left: 0.75rem;', 'margin-bottom: 0.75rem;']);
 echo html_writer::end_tag('form');
 
@@ -276,8 +294,7 @@ foreach ($data as $row) {
         $row->data_fim_turma_disciplina,
         $row->tempo_formatado,
         $row->porcentagem_pendente,
-        $row->status
-
+        $row->status_final
     ];
 }
 echo html_writer::table($table);
@@ -301,8 +318,10 @@ echo html_writer::table($table);
 $xlsxurl = new moodle_url('/local/coursecompletions/index.php', [
     'id' => $courseid,
     'groupid' => $groupid,
+    'status' => $statusfilter,
     'download' => 'xlsx'
 ]);
+
 echo html_writer::link(
     $xlsxurl,
     'Exportar XLSX',
@@ -314,7 +333,10 @@ echo html_writer::link(
 );
 
 // Paginação
-$baseurl = new moodle_url('/local/coursecompletions/index.php', ['id' => $courseid, 'groupid' => $groupid]);
-echo $OUTPUT->paging_bar($totalusers, $page, $perpage, $baseurl);
+$baseurl = new moodle_url('/local/coursecompletions/index.php', [
+    'id' => $courseid,
+    'groupid' => $groupid,
+    'status' => $statusfilter
+]);
 
 echo $OUTPUT->footer();
