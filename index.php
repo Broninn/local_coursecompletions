@@ -255,6 +255,13 @@ if ($download === 'xlsx') {
     $writer->save('php://output');
     exit;
 }
+// Cores dos status
+echo html_writer::tag('style', '
+    .status-concluido td     { background-color: #d4edda !important; }       /* Verde claro */
+    .status-ainiciar td      { background-color: #f8f9fa !important; }       /* Cinza claro */
+    .status-emandamento td   { background-color: #fff3cd !important; }       /* Amarelo claro */
+    .status-possivel-evasao td { background-color: #f8d7da !important; }     /* Vermelho claro */
+');
 
 
 // Renderização HTML
@@ -298,6 +305,7 @@ echo html_writer::end_tag('form');
 // Tabela
 $table = new html_table();
 $table->head = ['Nome Completo', 'Grupo(s)', 'Data Início Turma Disciplina', 'Data Fim Turma Disciplina', 'Tempo de Acesso', 'Atividades Pendentes', 'Status'];
+
 if (empty($data)) {
     $table->data[] = [
         html_writer::tag('em', 'Sem registros encontrados.'),
@@ -310,7 +318,25 @@ if (empty($data)) {
     ];
 } else {
     foreach ($data as $row) {
-        $table->data[] = [
+        // Define a classe da linha com base no status
+        $statusclass = '';
+        switch (strtolower($row->status_final)) {
+            case 'concluído':
+                $statusclass = 'status-concluido';
+                break;
+            case 'a iniciar':
+                $statusclass = 'status-ainiciar';
+                break;
+            case 'em andamento':
+                $statusclass = 'status-emandamento';
+                break;
+            case 'possível evasão':
+                $statusclass = 'status-possivel-evasao';
+                break;
+        }
+
+        // Dados da linha
+        $rowdata = [
             $row->fullname,
             $row->groupname,
             $row->data_inicio_turma_disciplina,
@@ -319,7 +345,14 @@ if (empty($data)) {
             $row->porcentagem_pendente,
             $row->status_final
         ];
+
+        $rowobj = new html_table_row();
+        $rowobj->cells = $rowdata;
+        $rowobj->attributes['class'] = $statusclass;
+        $table->data[] = $rowobj;
+
     }
+
 }
 
 echo html_writer::table($table);
@@ -365,7 +398,6 @@ echo html_writer::link(
     $buttonattributes
 );
 
-
 $countfilteredsql = "
     SELECT COUNT(*) FROM (
         SELECT u.id
@@ -406,5 +438,4 @@ if ($totalfiltered > $perpage) {
     echo $OUTPUT->paging_bar($totalfiltered, $page, $perpage, $baseurl);
 }
 
-// echo $OUTPUT->paging_bar($totalusers, $page, $perpage, $baseurl);
 echo $OUTPUT->footer();
