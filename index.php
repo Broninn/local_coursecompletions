@@ -31,6 +31,11 @@ $groupfilter = '';
 $totalcriteria = $DB->count_records('course_completion_criteria', ['course' => $courseid]);
 $params = [
     'courseid' => $courseid,
+    // 'courseid2' => $courseid,
+    'courseid3' => $courseid,
+    'courseid4' => $courseid,
+    'courseid5' => $courseid,
+    'courseid6' => $courseid,
     'groupidcourse' => $courseid,
     'groupid' => $groupid,
     'dedicationcourseid' => $courseid, // novo alias
@@ -56,8 +61,6 @@ $countsql = "
     $groupfilter
 ";
 $totalusers = $DB->count_records_sql($countsql, $params);
-
-
 
 $datasql = "
     SELECT 
@@ -89,19 +92,78 @@ $datasql = "
             ELSE 'Possível evasão'
         END AS status,
 
-        CASE 
-            WHEN bd.total IS NULL OR bd.total = 0 THEN 'Nunca acessou'
-            ELSE TRIM(BOTH FROM
-                CONCAT(
-                    CASE 
-                        WHEN EXTRACT(hour FROM make_interval(secs => bd.total)) > 0 
-                            THEN EXTRACT(hour FROM make_interval(secs => bd.total)) || 'h '
+        CASE
+        WHEN SUM(bd.total) IS NULL THEN 'Nunca acessou'
+        ELSE TRIM(
+            BOTH
+            FROM
+                CONCAT (
+                    CASE
+                        WHEN EXTRACT(
+                            hour
+                            FROM
+                                make_interval (secs => SUM(bd.total))
+                        ) > 0 THEN EXTRACT(
+                            hour
+                            FROM
+                                make_interval (secs => SUM(bd.total))
+                        ) || 'h '
                         ELSE ''
                     END,
-                    EXTRACT(minute FROM make_interval(secs => bd.total)) || 'min'
+                    EXTRACT(
+                        minute
+                        FROM
+                            make_interval (secs => SUM(bd.total))
+                    ) || 'min'
                 )
-            )
-        END AS tempo_formatado
+        )
+    END AS tempo_formatado,
+    
+    ROUND(
+        100.0 * (
+            (
+                SELECT
+                    COUNT(*)
+                FROM
+                    mdl_course_completion_criteria
+                WHERE
+                    course = :courseid3
+            ) - COUNT(DISTINCT ccc.criteriaid)
+        ) / NULLIF(
+            (
+                SELECT
+                    COUNT(*)
+                FROM
+                    mdl_course_completion_criteria
+                WHERE
+                    course = :courseid4
+            ),
+            0
+        )
+    ,1) || '%' AS porcentagem_pendente,
+    CASE
+        WHEN TO_TIMESTAMP (ue.timestart) > NOW () THEN 'A iniciar'
+        --WHEN COUNT(DISTINCT ccc.criteriaid) = 0 THEN 'Possível evasão'
+        WHEN COUNT(DISTINCT ccc.criteriaid) < (
+            SELECT
+                COUNT(*)
+            FROM
+                mdl_course_completion_criteria
+            WHERE
+                course = :courseid5
+        )
+        AND ue.timeend > 0
+        AND TO_TIMESTAMP (ue.timeend) > NOW () THEN 'Em andamento'
+        WHEN COUNT(DISTINCT ccc.criteriaid) < (
+            SELECT
+                COUNT(*)
+            FROM
+                mdl_course_completion_criteria
+            WHERE
+                course = :courseid6
+        ) THEN 'Possível evasão' -- aluno com critérios incompletos, mas data final já passou
+        ELSE 'Concluído'
+    END AS status
 
     FROM {user} u
     INNER JOIN {user_enrolments} ue ON ue.userid = u.id
@@ -135,7 +197,7 @@ if ($download === 'csv') {
 
     $out = fopen('php://output', 'w');
 
-    fputcsv($out, ['Nome Completo', 'Grupo(s)', 'Data inicio', 'Data fim', 'Status', 'Tempo de Acesso'], ';');
+    fputcsv($out, ['Nome Completo', 'Grupo(s)', 'Data Início Turma Disciplina', 'Data Fim Turma Disciplina', 'Tempo de Acesso', 'Atividades Pendentes', 'Status'], ';');
 
     // Dados
     foreach ($data as $row) {
@@ -144,8 +206,9 @@ if ($download === 'csv') {
             $row->groupname,
             $row->data_inicio_turma_disciplina,
             $row->data_fim_turma_disciplina,
-            $row->status,
-            $row->tempo_formatado
+            $row->tempo_formatado,
+            $row->porcentagem_pendente,
+            $row->status
 
         ], ';');
     }
@@ -161,7 +224,7 @@ if ($download === 'xlsx') {
     $sheet = $spreadsheet->getActiveSheet();
 
     // Cabeçalhos
-    $sheet->fromArray(['Nome Completo', 'Grupo(s)', 'Data inicio', 'Data fim', 'Status', 'Tempo de Acesso'], NULL, 'A1');
+    $sheet->fromArray(['Nome Completo', 'Grupo(s)', 'Data Início Turma Disciplina', 'Data Fim Turma Disciplina', 'Tempo de Acesso', 'Atividades Pendentes', 'Status'], NULL, 'A1');
 
     // Dados
     $rownum = 2;
@@ -171,8 +234,10 @@ if ($download === 'xlsx') {
             $row->groupname,
             $row->data_inicio_turma_disciplina,
             $row->data_fim_turma_disciplina,
-            $row->status,
-            $row->tempo_formatado
+            $row->tempo_formatado,
+            $row->porcentagem_pendente,
+            $row->status
+
         ], NULL, "A$rownum");
         $rownum++;
     }
@@ -202,15 +267,17 @@ echo html_writer::end_tag('form');
 
 // Tabela
 $table = new html_table();
-$table->head = ['Nome Completo', 'Grupo(s)', 'Data inicio', 'Data fim', 'Status', 'Tempo de Acesso'];
+$table->head = ['Nome Completo', 'Grupo(s)', 'Data Início Turma Disciplina', 'Data Fim Turma Disciplina', 'Tempo de Acesso', 'Atividades Pendentes', 'Status'];
 foreach ($data as $row) {
     $table->data[] = [
         $row->fullname,
         $row->groupname,
         $row->data_inicio_turma_disciplina,
         $row->data_fim_turma_disciplina,
-        $row->status,
-        $row->tempo_formatado
+        $row->tempo_formatado,
+        $row->porcentagem_pendente,
+        $row->status
+
     ];
 }
 echo html_writer::table($table);
