@@ -259,14 +259,23 @@ if ($download === 'xlsx') {
 
 // Renderização HTML
 echo $OUTPUT->header();
-echo $OUTPUT->heading('Relatório de Conclusão de Curso');
 
 // Filtro de Grupo
-echo html_writer::start_tag('form', ['method' => 'get']);
+echo html_writer::start_tag('form', ['id' => 'formId', 'method' => 'get', 'style' => 'margin-bottom: 0.75rem;']);
 echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'id', 'value' => $courseid]);
 echo html_writer::label('Grupo: ', 'groupid', ['style' => 'margin-bottom: 0.75rem;']);
-echo html_writer::select($groupoptions, 'groupid', $groupid, false, ['style' => 'margin-left: 0.75rem;', 'margin-bottom: 0.75rem;']);
-echo html_writer::label('Status: ', 'status', ['style' => 'margin-left: 1rem; margin-bottom: 0.75rem;']);
+echo html_writer::select(
+    $groupoptions,
+    'groupid',
+    $groupid,
+    false,
+    [
+        'id' => 'groupid',
+        'style' => 'margin-left: 0.75rem;',
+        'margin-bottom: 0.75rem;'
+    ]
+);
+echo html_writer::label('Status: ', 'status', ['style' => 'margin-left: 0.5rem; margin-bottom: 0.75rem;']);
 echo html_writer::select(
     [
         '' => 'Todos',
@@ -278,7 +287,10 @@ echo html_writer::select(
     'status',
     $statusfilter,
     false,
-    ['style' => 'margin-left: 0.5rem;']
+    [
+        'id' => 'status',
+        'style' => 'margin-left: 0.5rem;'
+    ]
 );
 echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => 'Filtrar', 'class' => 'btn btn-primary', 'style' => 'margin-left: 0.75rem;', 'margin-bottom: 0.75rem;']);
 echo html_writer::end_tag('form');
@@ -286,17 +298,30 @@ echo html_writer::end_tag('form');
 // Tabela
 $table = new html_table();
 $table->head = ['Nome Completo', 'Grupo(s)', 'Data Início Turma Disciplina', 'Data Fim Turma Disciplina', 'Tempo de Acesso', 'Atividades Pendentes', 'Status'];
-foreach ($data as $row) {
+if (empty($data)) {
     $table->data[] = [
-        $row->fullname,
-        $row->groupname,
-        $row->data_inicio_turma_disciplina,
-        $row->data_fim_turma_disciplina,
-        $row->tempo_formatado,
-        $row->porcentagem_pendente,
-        $row->status_final
+        html_writer::tag('em', 'Sem registros encontrados.'),
+        '',
+        '',
+        '',
+        '',
+        '',
+        ''
     ];
+} else {
+    foreach ($data as $row) {
+        $table->data[] = [
+            $row->fullname,
+            $row->groupname,
+            $row->data_inicio_turma_disciplina,
+            $row->data_fim_turma_disciplina,
+            $row->tempo_formatado,
+            $row->porcentagem_pendente,
+            $row->status_final
+        ];
+    }
 }
+
 echo html_writer::table($table);
 
 // Botão CSV
@@ -322,15 +347,53 @@ $xlsxurl = new moodle_url('/local/coursecompletions/index.php', [
     'download' => 'xlsx'
 ]);
 
+$buttonattributes = [
+    'class' => 'btn btn-primary',
+    'style' => 'margin-top:0.75rem; margin-bottom: 0.75rem;'
+];
+
+if (empty($data)) {
+    $buttonattributes['class'] .= ' disabled';
+    $buttonattributes['aria-disabled'] = 'true';
+    $buttonattributes['onclick'] = 'return false;';
+    $buttonattributes['style'] = 'background-color: #808080; border-color: #808080; cursor: not-allowed';
+}
+
 echo html_writer::link(
     $xlsxurl,
     'Exportar XLSX',
-    [
-        'class' => 'btn btn-primary',
-        'style' => 'margin-top:0.75rem; margin-bottom: 0.75rem'
-
-    ]
+    $buttonattributes
 );
+
+
+$countfilteredsql = "
+    SELECT COUNT(*) FROM (
+        SELECT u.id
+        FROM {user} u
+        INNER JOIN {user_enrolments} ue ON ue.userid = u.id
+        INNER JOIN {enrol} e ON e.id = ue.enrolid AND e.courseid = :courseid
+        INNER JOIN {role_assignments} ra ON ra.userid = u.id AND ra.roleid = 5
+        INNER JOIN {context} ct ON ct.contextlevel = 50 AND ct.instanceid = e.courseid AND ct.id = ra.contextid
+        LEFT JOIN {course_completion_crit_compl} ccc ON ccc.userid = u.id AND ccc.course = e.courseid
+        $groupfilter
+        GROUP BY u.id, ue.timestart, ue.timeend
+        HAVING 1=1" .
+    (!empty($statusfilter) ? " AND (
+            CASE
+                WHEN TO_TIMESTAMP (ue.timestart) > NOW () THEN 'A iniciar'
+                WHEN COUNT(DISTINCT ccc.criteriaid) < (
+                    SELECT COUNT(*) FROM mdl_course_completion_criteria WHERE course = :courseid2
+                ) AND ue.timeend > 0 AND TO_TIMESTAMP (ue.timeend) > NOW () THEN 'Em andamento'
+                WHEN COUNT(DISTINCT ccc.criteriaid) < (
+                    SELECT COUNT(*) FROM mdl_course_completion_criteria WHERE course = :courseid7
+                ) THEN 'Possível evasão'
+                ELSE 'Concluído'
+            END
+        ) = :statusfilter" : "") . "
+    ) AS subquery
+";
+
+$totalfiltered = $DB->count_records_sql($countfilteredsql, $params);
 
 // Paginação
 $baseurl = new moodle_url('/local/coursecompletions/index.php', [
@@ -339,4 +402,9 @@ $baseurl = new moodle_url('/local/coursecompletions/index.php', [
     'status' => $statusfilter
 ]);
 
+if ($totalfiltered > $perpage) {
+    echo $OUTPUT->paging_bar($totalfiltered, $page, $perpage, $baseurl);
+}
+
+// echo $OUTPUT->paging_bar($totalusers, $page, $perpage, $baseurl);
 echo $OUTPUT->footer();
