@@ -56,11 +56,42 @@ if ($isteacher && $groupid > 0 && !array_key_exists($groupid, $groupmenu)) {
     $groupid = 0;
 }
 
+// Obter quantidade de alunos por grupo
+$groupcounts = [];
+
+if (!empty($groupmenu)) {
+    $groupids = array_keys($groupmenu);
+    list($inids, $inparams) = $DB->get_in_or_equal($groupids, SQL_PARAMS_NAMED);
+
+    $sql = "
+        SELECT gm.groupid, COUNT(DISTINCT u.id) AS usercount
+        FROM {groups_members} gm
+        JOIN {user} u ON u.id = gm.userid
+        JOIN {user_enrolments} ue ON ue.userid = u.id
+        JOIN {enrol} e ON e.id = ue.enrolid AND e.courseid = :courseid
+        JOIN {role_assignments} ra ON ra.userid = u.id AND ra.roleid = 5
+        JOIN {context} ctx ON ctx.id = ra.contextid AND ctx.instanceid = e.courseid AND ctx.contextlevel = 50
+        WHERE gm.groupid $inids
+        GROUP BY gm.groupid
+    ";
+
+    $params = array_merge(['courseid' => $courseid], $inparams);
+    $results = $DB->get_records_sql($sql, $params);
+
+    foreach ($groupids as $gid) {
+        $groupcounts[$gid] = isset($results[$gid]) ? $results[$gid]->usercount : 0;
+    }
+}
 
 
-$groupoptions = [0 => 'Todos os participantes'] + array_column($groupmenu, 'name', 'id');
 
-$groupoptions = [0 => 'Todos os participantes'] + array_column($groupmenu, 'name', 'id');
+$groupoptions = [0 => 'Todos os participantes'];
+
+foreach ($groupmenu as $id => $group) {
+    $count = isset($groupcounts[$id]) ? $groupcounts[$id] : 0;
+    $groupoptions[$id] = $group->name . " ({$count})";
+}
+
 
 // SQL dinâmico com contagem para paginação
 $groupfilter = '';
