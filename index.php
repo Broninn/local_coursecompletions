@@ -87,6 +87,7 @@ $datasql = "
     END AS data_inicio_turma_disciplina,
     CASE
         WHEN ue.timeend = 0 THEN 'Aluno egresso'
+        WHEN ue.timeend = 6739200 THEN 'Aluno egresso'
         ELSE TO_CHAR (
             TO_TIMESTAMP (ue.timeend) AT TIME ZONE 'UTC' AT TIME ZONE INTERVAL '+03:00',
             'DD/MM/YYYY HH24:MI:SS'
@@ -352,7 +353,6 @@ if (empty($data)) {
         $table->data[] = $rowobj;
 
     }
-
 }
 
 echo html_writer::table($table);
