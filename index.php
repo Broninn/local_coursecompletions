@@ -16,6 +16,19 @@ $statusfilter = optional_param('status', '', PARAM_TEXT);
 
 require_login($courseid);
 $context = context_course::instance($courseid);
+
+$roles = get_user_roles($context, $USER->id);
+$iseditingteacher = false;
+$isteacher = false;
+
+foreach ($roles as $role) {
+    if ($role->shortname === 'editingteacher') {
+        $iseditingteacher = true;
+    } else if ($role->shortname === 'teacher') {
+        $isteacher = true;
+    }
+}
+
 require_capability('local/coursecompletions:view', $context);
 
 $PAGE->set_url(new moodle_url('/local/coursecompletions/index.php', ['id' => $courseid, 'groupid' => $groupid]));
@@ -23,7 +36,30 @@ $PAGE->set_context($context);
 $PAGE->set_title('Relatório de Conclusão de Curso');
 $PAGE->set_heading('Relatório de Conclusão de Curso');
 
-$groupmenu = groups_get_all_groups($courseid);
+// $groupmenu = groups_get_all_groups($courseid);
+
+if ($iseditingteacher) {
+    // Pode ver todos os grupos
+    $groupmenu = groups_get_all_groups($courseid);
+} else if ($isteacher) {
+    // Pode ver somente os grupos que participa
+    $groupmenu = groups_get_all_groups($courseid, $USER->id);
+} else {
+    // Gerentes ou outros com permissão total
+    $groupmenu = groups_get_all_groups($courseid);
+}
+
+$grupoacessonegado = false;
+if ($isteacher && $groupid > 0 && !array_key_exists($groupid, $groupmenu)) {
+    $grupoacessonegado = true;
+    // força groupid para 0 para evitar SQL inválido
+    $groupid = 0;
+}
+
+
+
+$groupoptions = [0 => 'Todos os participantes'] + array_column($groupmenu, 'name', 'id');
+
 $groupoptions = [0 => 'Todos os participantes'] + array_column($groupmenu, 'name', 'id');
 
 // SQL dinâmico com contagem para paginação
@@ -52,10 +88,34 @@ if (!empty($statusfilter)) {
     $params['statusfilter'] = $statusfilter;
 }
 
-if ($groupid > 0) {
+$teacher_groupids = [];
+if ($isteacher) {
+    $usergroups = groups_get_all_groups($courseid, $USER->id);
+    if (!empty($usergroups)) {
+        $teacher_groupids = array_keys($usergroups);
+    }
+}
+
+if ($isteacher) {
+    if ($groupid > 0 && in_array($groupid, $teacher_groupids)) {
+        // Moderador selecionou grupo permitido
+        $groupfilter = "INNER JOIN {groups_members} gm ON gm.userid = u.id AND gm.groupid = :groupid";
+        $params['groupid'] = $groupid;
+    } else {
+        // Moderador selecionou "todos" ou tentou grupo que não tem acesso: filtra apenas os grupos que ele participa
+        list($ingroupsql, $ingroupparams) = $DB->get_in_or_equal($teacher_groupids, SQL_PARAMS_NAMED, 'grp');
+        $groupfilter = "INNER JOIN {groups_members} gm ON gm.userid = u.id AND gm.groupid $ingroupsql";
+        $params = array_merge($params, $ingroupparams);
+    }
+} else if ($groupid > 0) {
+    // Professor ou gerente com grupo selecionado
     $groupfilter = "INNER JOIN {groups_members} gm ON gm.userid = u.id AND gm.groupid = :groupid";
     $params['groupid'] = $groupid;
 }
+
+
+
+
 
 $countsql = "
     SELECT COUNT(DISTINCT u.id)
@@ -267,6 +327,11 @@ echo html_writer::tag('style', '
 
 // Renderização HTML
 echo $OUTPUT->header();
+
+if ($grupoacessonegado) {
+    echo $OUTPUT->notification('Você não possui acesso a esse grupo. Por favor, selecione outro grupo abaixo.', 'notifyproblem');
+}
+
 
 // Filtro de Grupo
 echo html_writer::start_tag('form', ['id' => 'formId', 'method' => 'get', 'style' => 'margin-bottom: 0.75rem;']);
